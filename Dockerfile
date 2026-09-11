@@ -8,9 +8,9 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install -r requirements.txt
 
-COPY app.py backtest.py test_backtest.py ./
+COPY app.py backtest.py market_filters.py test_backtest.py test_market_filters.py ./
 COPY .streamlit/config.toml .streamlit/config.toml
-RUN python -m unittest -q test_backtest.py \
+RUN python -m unittest -q test_backtest.py test_market_filters.py \
     && useradd --create-home --uid 10001 appuser
 USER appuser
 

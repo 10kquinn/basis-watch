@@ -7,7 +7,8 @@ The default filters match the original scanner:
 
 - Minimum APR: 15%
 - Minimum stability: 80%
-- Exchanges: Kraken, OKX, Lighter, Hyperliquid, dYdX, Binance, Bybit, Coinbase
+- Initially selected exchanges: Kraken, OKX, Lighter, Hyperliquid, dYdX, Binance,
+  Bybit, Coinbase International (`coinbase_intx` in the current feed)
 - Both the long and short exchange must be in the allowed list
 
 ## Fastest way to run it on a Mac
@@ -44,6 +45,20 @@ python3 -m streamlit run app.py
 ## Using the site
 
 - Change APR, stability, exchanges, or asset search in the left sidebar.
+- Use **Asset group → TradFi** for stocks, ETFs, indices, commodities, forex and
+  other TradFi-linked derivatives. **Crypto** includes provider-classified crypto;
+  **All** also includes unclassified assets. You can narrow TradFi by category.
+- The exchange selector includes the full live Bend Basis exchange catalogue,
+  plus any additional venues present in the opportunity feed. **Select all**
+  enables every venue; **Clear all** removes them. Both legs must be selected.
+  Venue names are preserved separately (including HIP-3 and other sub-venues).
+- Asset classifications come from `https://api.bendbasis.com/v1/assets`; exchange
+  IDs come from `https://api.bendbasis.com/v1/exchanges`. Both catalogues are cached
+  for one hour and cleared by **Refresh market data**. No ticker-name guesses are
+  used: for example, SPX remains crypto while SP500 is an index. If classification
+  data fails, All remains usable and a warning explains the missing categories.
+  If the exchange catalogue fails, every venue in the opportunity feed remains
+  selectable. Choosing TradFi does not silently relax APR, stability or venues.
 - Select the checkbox beside any opportunity to open a chart comparing the
   long and short markets' funding APR over the latest 30 days.
 - Both market histories are overlaid on the same time axis; hover over either
@@ -54,11 +69,14 @@ python3 -m streamlit run app.py
 - Compare current open interest and trailing 24-hour volume for the long and
   short venues. Liquidity values use each market's reported quote currency.
 - Click a liquidity row marked ↗ to open that perpetual market in a new tab.
-  Links support all eight allowed exchanges, including Binance USD1/USDC and
+  Direct market links support the original eight exchanges, including Binance USD1/USDC and
   Bybit USDC contracts. Native symbol catalogues are cached for one hour to
   resolve multiplier contracts such as 1000PEPE and Hyperliquid's kPEPE.
   If a native catalogue is unavailable, the link uses the standard market
   path. Markets removed by a venue may no longer open even if the feed lists them.
+  Other exchanges support opportunity selection, history, backtesting and liquidity
+  wherever Bend Basis supplies that data; their rows stay unlinked until a direct
+  market URL is supported.
 - Use **Sort results by**, or select a table column heading to sort.
 - Select **Refresh market data** for a fresh API request. Data is otherwise
   refreshed at most once per minute.
@@ -98,8 +116,9 @@ python3 -m streamlit run app.py
   Results are conditional on the position remaining open throughout the window.
 
 The chart and backtest share the same cached histories and 30-day window. Use
-**Refresh market data** to fetch fresh data. Keep `backtest.py` alongside `app.py`.
-To check the calculation locally: `python3 -m unittest test_backtest.py`.
+**Refresh market data** to fetch fresh data. Keep `backtest.py` and `market_filters.py`
+alongside `app.py`. To check calculations and filters locally:
+`python3 -m unittest test_backtest.py test_market_filters.py`.
 
 ## Troubleshooting
 

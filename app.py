@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape
+from hashlib import sha256
 from math import isfinite
 from urllib.parse import quote as url_quote
 
@@ -11,6 +12,10 @@ import requests
 import streamlit as st
 
 from backtest import HistoryUnavailable, calculate_backtest
+from market_filters import (
+    CLASS_LABELS, TRADFI_CLASSES, asset_classes, available_exchanges,
+    exchange_ids, filter_asset_group,
+)
 
 
 API_URL = "https://bendbasis.com/api/v1/public/funding/arbitrage"
@@ -19,13 +24,17 @@ MARKETS_URL = "https://bendbasis.com/api/v1/public/funding/markets"
 DEFAULT_EXCHANGES = [
     "binance",
     "bybit",
-    "coinbase",
+    "coinbase_intx",
     "dydx",
     "hyperliquid",
     "kraken",
     "lighter",
     "okx",
 ]
+
+
+def exchange_label(value: str) -> str:
+    return "Coinbase International" if value == "coinbase_intx" else value.replace("_", " ").title()
 
 
 st.set_page_config(
@@ -412,8 +421,8 @@ def fetch_opportunities() -> tuple[pd.DataFrame, int, int, str]:
                 "Asset": asset,
                 "APR": apr,
                 "Stability": stability * 100,
-                "Long exchange": long_exchange.title(),
-                "Short exchange": short_exchange.title(),
+                "Long exchange": exchange_label(long_exchange),
+                "Short exchange": exchange_label(short_exchange),
                 "_long": long_exchange,
                 "_short": short_exchange,
                 "_long_market_id": long_market_id,
@@ -435,6 +444,20 @@ def fetch_opportunities() -> tuple[pd.DataFrame, int, int, str]:
     frame = pd.DataFrame(rows, columns=columns)
     fetched_at = datetime.now().astimezone().strftime("%I:%M:%S %p")
     return frame, len(payload), skipped, fetched_at
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_asset_classes() -> dict[str, str]:
+    response = requests.get("https://api.bendbasis.com/v1/assets", timeout=20)
+    response.raise_for_status()
+    return asset_classes(response.json())
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_exchange_ids() -> list[str]:
+    response = requests.get("https://api.bendbasis.com/v1/exchanges", timeout=20)
+    response.raise_for_status()
+    return exchange_ids(response.json())
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -618,7 +641,7 @@ def perpetual_market_url(
         return f"https://app.hyperliquid.xyz/trade/{base}"
     if venue == "lighter" and quote in {"USD", "USDC"}:
         return f"https://app.lighter.xyz/trade/{base}"
-    if venue == "coinbase" and quote in {"USD", "USDC"}:
+    if venue in {"coinbase", "coinbase_intx"} and quote in {"USD", "USDC"}:
         return f"https://www.coinbase.com/advanced-trade/perpetuals/{base}-PERP-INTX"
     return None
 
@@ -635,7 +658,7 @@ st.markdown(
     </div>
     <div class="live-ribbon">
         <span class="live-dot"></span>
-        Live Bend Basis market data · refreshes every 60 seconds
+        Live Bend Basis market data · cached for up to 60 seconds
     </div>
     """,
     unsafe_allow_html=True,
@@ -644,7 +667,18 @@ st.markdown(
 
 with st.sidebar:
     st.header("Opportunity filters")
-    st.caption("The defaults match your original Python scanner.")
+    st.caption("Choose an asset group and the venues you want to compare.")
+
+    asset_group = st.radio("Asset group", ["All", "Crypto", "TradFi"], horizontal=True,
+                           key="asset_group")
+    tradfi_categories = list(TRADFI_CLASSES)
+    if asset_group == "TradFi":
+        tradfi_categories = st.multiselect(
+            "TradFi categories", options=[key for key in CLASS_LABELS if key in TRADFI_CLASSES],
+            default=[key for key in CLASS_LABELS if key in TRADFI_CLASSES],
+            format_func=CLASS_LABELS.get, key="tradfi_categories",
+        )
+    st.caption("Asset classes come from Bend Basis. Unclassified assets appear only in All.")
 
     min_apr = st.number_input(
         "Minimum APR",
@@ -664,30 +698,18 @@ with st.sidebar:
         format="%d%%",
         help="Higher stability can mean a more consistent historical spread.",
     )
-    selected_exchanges = st.multiselect(
-        "Allowed exchanges",
-        options=DEFAULT_EXCHANGES,
-        default=DEFAULT_EXCHANGES,
-        format_func=str.title,
-        help="Both the long and short exchange must be selected.",
-    )
     asset_search = st.text_input(
         "Find an asset",
-        placeholder="Try BTC or ETH",
+        placeholder="Try BTC, TSLA or XAU",
     ).strip().upper()
-
-    st.divider()
-    sort_label = st.selectbox(
-        "Sort results by",
-        options=["APR", "Stability", "Asset", "Long exchange", "Short exchange"],
-    )
-    descending = st.toggle("Highest first", value=True)
 
     if st.button("Refresh market data", width="stretch"):
         fetch_opportunities.clear()
         fetch_history.clear()
         fetch_market_snapshots.clear()
         fetch_venue_symbols.clear()
+        fetch_asset_classes.clear()
+        fetch_exchange_ids.clear()
         st.rerun()
 
 
@@ -709,6 +731,49 @@ except (ValueError, TypeError) as error:
     st.stop()
 
 
+try:
+    classes = fetch_asset_classes()
+except (requests.RequestException, ValueError, TypeError):
+    classes = {}
+    st.warning("Asset classifications are temporarily unavailable. All still works; "
+               "Crypto and TradFi cannot classify results until Refresh market data succeeds.")
+try:
+    exchange_catalogue = fetch_exchange_ids()
+except (requests.RequestException, ValueError, TypeError):
+    exchange_catalogue = []
+    st.warning("The full exchange catalogue is temporarily unavailable. "
+               "The selector includes every exchange in the current opportunity feed.")
+
+opportunities = opportunities.copy()
+opportunities["_asset_class"] = opportunities["Asset"].map(classes).fillna("unknown")
+opportunities["Asset class"] = opportunities["_asset_class"].map(CLASS_LABELS)
+exchange_options = available_exchanges(opportunities, exchange_catalogue)
+if "selected_exchanges" not in st.session_state:
+    st.session_state.selected_exchanges = [x for x in DEFAULT_EXCHANGES if x in exchange_options]
+else:
+    st.session_state.selected_exchanges = [x for x in st.session_state.selected_exchanges if x in exchange_options]
+
+with st.sidebar:
+    st.divider()
+    st.caption(f"{len(exchange_options)} exchanges available · both trade legs must be selected")
+    select_all, clear_all = st.columns(2)
+    if select_all.button("Select all", width="stretch"):
+        st.session_state.selected_exchanges = exchange_options
+    if clear_all.button("Clear all", width="stretch"):
+        st.session_state.selected_exchanges = []
+    selected_exchanges = st.multiselect(
+        "Allowed exchanges", options=exchange_options, key="selected_exchanges",
+        format_func=exchange_label,
+        help="Every exchange in Bend Basis's catalogue or live opportunities is available. "
+             "The original eight venues are selected by default.",
+    )
+    st.divider()
+    sort_label = st.selectbox(
+        "Sort results by",
+        options=["APR", "Stability", "Asset", "Long exchange", "Short exchange"],
+    )
+    descending = st.toggle("Highest first", value=True)
+
 selected = set(selected_exchanges)
 if selected:
     filtered = opportunities[
@@ -719,6 +784,8 @@ if selected:
     ].copy()
 else:
     filtered = opportunities.iloc[0:0].copy()
+
+filtered = filter_asset_group(filtered, asset_group, tradfi_categories)
 
 if asset_search:
     filtered = filtered[
@@ -759,12 +826,13 @@ st.markdown(
 selected_position = None
 if filtered.empty:
     st.info(
-        "No opportunities meet every filter right now. Try lowering minimum "
-        "stability or selecting more exchanges."
+        "No opportunities meet every filter right now. Try Select all exchanges, "
+        "lower APR or stability, or choose another asset group/category."
     )
 else:
     display_columns = [
         "Asset",
+        "Asset class",
         "APR",
         "Stability",
         "Long exchange",
@@ -775,11 +843,14 @@ else:
         hide_index=True,
         width="stretch",
         height=min(720, 39 + (len(filtered) * 35)),
-        key="opportunity_table",
+        key="opportunity_table_" + sha256(
+            repr(list(zip(filtered["_long_market_id"], filtered["_short_market_id"]))).encode()
+        ).hexdigest()[:16],
         on_select="rerun",
         selection_mode="single-row",
         column_config={
             "Asset": st.column_config.TextColumn("Asset", width="small"),
+            "Asset class": st.column_config.TextColumn("Asset class", width="small"),
             "APR": st.column_config.NumberColumn(
                 "APR", format="%.2f%%", width="small"
             ),
@@ -1026,7 +1097,7 @@ else:
     st.subheader("Venue liquidity")
     st.caption(
         "Current open interest and trailing 24-hour volume, reported in each "
-        "market's quote currency."
+        "market's quote currency. Rows marked ↗ have direct market links."
     )
 
     try:
@@ -1048,12 +1119,13 @@ else:
             snapshot = snapshots.get(market_id, {})
             quote_asset = str(snapshot.get("quote_asset") or "quote units").upper()
             market_base = str(snapshot.get("base_asset") or asset).strip().upper()
+            venue_slug = str(selected_position["_long" if side == "Long" else "_short"])
             try:
-                native_symbols = fetch_venue_symbols(exchange.lower()).get(quote_asset, [])
+                native_symbols = fetch_venue_symbols(venue_slug).get(quote_asset, [])
             except (requests.RequestException, ValueError, KeyError, TypeError):
                 native_symbols = []
             market_url = perpetual_market_url(
-                exchange, market_base, quote_asset, native_symbols
+                venue_slug, market_base, quote_asset, native_symbols
             )
             row_open = '<div class="venue-row">'
             row_close = '</div>'

@@ -4,6 +4,8 @@
 !requirements.txt
 !app.py
 !backtest.py
+!market_filters.py
 !test_backtest.py
+!test_market_filters.py
 !.streamlit/
 !.streamlit/config.toml
