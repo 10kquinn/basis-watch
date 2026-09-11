@@ -1,0 +1,9 @@
+# Only these application files are sent into the image build.
+**
+!Dockerfile
+!requirements.txt
+!app.py
+!backtest.py
+!test_backtest.py
+!.streamlit/
+!.streamlit/config.toml
