@@ -999,9 +999,9 @@ else:
         )
 
     st.markdown('<div class="history-rule"></div>', unsafe_allow_html=True)
-    st.subheader("30-day funding backtest")
+    st.subheader("Funding backtest · up to 30 days")
     st.caption(
-        "Replays both markets' historical funding payouts · equal long and short "
+        "Uses the longest shared history within the last 30 days · equal long and short "
         "positions · 2× leverage · 0.2% entry + 0.2% exit fees on each leg."
     )
     capital = st.number_input(
@@ -1025,22 +1025,26 @@ else:
                 capital, window_end,
             )
         except HistoryUnavailable as error:
-            st.warning(f"A full 30-day backtest is unavailable. {error} "
-                       "No missing payouts have been filled with today's rate. "
+            st.warning(f"A backtest cannot be calculated for this pair yet. {error} "
                        "Try Refresh market data or select another opportunity.")
         else:
+            st.caption(
+                f"Backtested period: {result.duration_days:.3f} days · "
+                f"{result.window_start:%d %b %Y %H:%M} → {result.window_end:%d %b %Y %H:%M} UTC. "
+                "Both legs use this same period; no extrapolation to 30 days."
+            )
+            if result.duration_days < 1:
+                st.caption("Less than one day of shared history: annualisation is especially sensitive to fees and individual payouts.")
             if result.notes:
-                st.warning(
-                    "Rough historical estimate — payout timing or recent coverage is uncertain. "
-                    "This is not a verified 30-day return. See the assumptions below."
+                st.caption(
+                    "Rough historical estimate — payout timing is irregular. "
+                    "See calculation details for the assumptions."
                 )
-                for note in result.notes:
-                    st.caption(note)
             result_color = "#087E70" if result.net >= 0 else "#B42318"
             estimate_label = "Estimated " if result.notes else ""
             cards = (
-                (f"{estimate_label}Net 30-day funding (after fees)", f"${result.net:,.2f}"),
-                (f"{estimate_label}30-day return on capital", f"{result.return_pct:,.2f}%"),
+                (f"{estimate_label}Net funding for tested period", f"${result.net:,.2f}"),
+                (f"{estimate_label}Return on capital for tested period", f"{result.return_pct:,.2f}%"),
                 (f"{estimate_label}Annualised return (simple)", f"{result.annualised_pct:,.2f}%"),
             )
             st.markdown(
@@ -1051,6 +1055,8 @@ else:
                 ) + '</div>', unsafe_allow_html=True,
             )
             with st.expander("Payouts, fees and calculation details"):
+                for note in result.notes:
+                    st.caption(note)
                 st.write(
                     f"${capital:,.2f} total collateral → ${capital / 2:,.2f} per venue "
                     f"at 2× leverage → ${result.notional_per_side:,.2f} notional per side."
@@ -1064,8 +1070,10 @@ else:
                         -result.entry_fee, -result.exit_fee, result.net)],
                 }))
                 st.write(
-                    f"Window (UTC): {window_start:%d %b %Y %H:%M} → "
-                    f"{window_end:%d %b %Y %H:%M}."
+                    f"Window (UTC): {result.window_start:%d %b %Y %H:%M} → "
+                    f"{result.window_end:%d %b %Y %H:%M} ({result.duration_days:.6f} days). "
+                    "Uses the longest overlapping range, excluding gaps longer than 24 hours; "
+                    "equally long ranges use the more recent one."
                 )
                 for side, leg in (("Long", result.long), ("Short", result.short)):
                     intervals = ', '.join(f"{hours:g}h" for hours in leg.intervals_hours)
@@ -1078,19 +1086,19 @@ else:
                     "÷ 8,760. Positive rates are paid by the long and received by the short; "
                     "negative rates reverse those cash flows. Each venue is summed independently. "
                     "Net return subtracts 0.2% entry and 0.2% exit fees from each leg's notional. "
-                    "Annualised return = net 30-day return on capital × 365 ÷ 30, without compounding."
+                    "Annualised return = net return on capital × 365 ÷ actual tested days, without compounding."
                 )
     st.caption(
         "Funding-only backtest reconstructed from historical APR, not actual total trading profit. "
         "The API omits settlement durations, so intervals are inferred from payout timestamps "
-        "(the first uses the next interval). Includes full inferred payouts after entry through exit. "
+        "Includes full inferred payouts strictly after the shared start through the shared end. "
         "For irregular histories, the ending historical APR is applied across each gap; "
         "these results are labelled rough estimates. No current APR is substituted, and "
         "no funding is added after the last available timestamp. Assumes fixed equal USD notionals and "
         "1:1 quote-currency/USD value. Excludes price/basis P&L, slippage, collateral changes "
         "and liquidation; assumes both positions remain open throughout. "
         "Coverage checks cannot prove the feed is complete. "
-        "Annualisation repeats this net 30-day outcome, including fees; it is not a forecast."
+        "Annualisation scales the net outcome for the actual tested period, including fees; it is not a forecast."
     )
 
     st.markdown('<div class="history-rule"></div>', unsafe_allow_html=True)

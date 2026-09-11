@@ -63,9 +63,10 @@ python3 -m streamlit run app.py
   long and short markets' funding APR over the latest 30 days.
 - Both market histories are overlaid on the same time axis; hover over either
   line to inspect an individual funding observation.
-- Enter total collateral below the chart to replay the last 30 days of historical
-  funding. The panel shows net funding after fees, return on capital, and the
-  simple annualised return. It does not use the current spread APR.
+- Enter total collateral below the chart to replay historical funding over the
+  longest period both markets actually cover within the last 30 days. The panel
+  states the tested period and shows net funding after fees, return on capital,
+  and the simple annualised return. It does not use the current spread APR.
 - Compare current open interest and trailing 24-hour volume for the long and
   short venues. Liquidity values use each market's reported quote currency.
 - Click a liquidity row marked ↗ to open that perpetual market in a new tab.
@@ -91,31 +92,44 @@ python3 -m streamlit run app.py
   funding interval hours / 8,760. Positive rates cost the long and pay the short;
   negative rates reverse this. Each venue is summed independently, so different
   funding schedules do not discard or duplicate payments.
+- **The tested period is the overlap of both histories, not a fixed 30 days.**
+  Each market's history is split at gaps longer than 24 hours, and the backtest
+  uses the longest continuous range both markets cover inside the rolling 30-day
+  UTC window; equally long ranges resolve to the more recent one. Both legs are
+  replayed over that same period, and the panel states its start, end and length.
+  Nothing is extrapolated to fill the rest of 30 days. A pair whose venues only
+  overlap for three days is reported as a three-day result.
+- Venues are not required to fund on the same schedule or at matching timestamps;
+  the overlap is computed from coverage ranges, so hourly and 8-hourly markets
+  can be compared.
 - The history endpoint supplies timestamps and annualised rates, not settlement
   durations. Durations are inferred from successive timestamps; the first uses
   the next observed interval. Repeated schedule changes are supported. Ambiguous
-  isolated intervals now produce a **rough historical estimate**: the APR at the
+  isolated intervals produce a **rough historical estimate**: the APR at the
   end of each gap is applied over that gap. This may overstate or understate
   funding if records are missing; it is not a verified realised return.
-- Recently delayed or missing final payouts also produce a labelled rough
-  estimate, with no funding added after the last available timestamp. Results
-  still require both histories to reach the start of the window, valid rates,
-  no conflicting duplicate records, gaps of at most 24 hours, and a final payout
-  no more than 24 hours old. These checks cannot prove every payout is present.
-- Includes full payouts strictly after entry up to and including exit in the
-  rolling 30-day UTC window, with no accrued funding beyond the last payout.
+- A backtest still requires valid rates, no conflicting duplicate records, and at
+  least one payout for each leg inside the shared period. Coverage checks cannot
+  prove every payout is present.
+- Includes full payouts strictly after the shared start through the shared end,
+  with no accrued funding beyond the last payout. A leg entering part-way through
+  an interval still pays that interval in full, as exchanges settle it.
 - Entry costs 0.2% of each leg's notional; exit costs another 0.2% each. On
   $10,000 capital this totals $40 entry + $40 exit = $80 (0.8% of capital).
+  Round-trip fees are the same regardless of how short the tested period is.
 - Net return = long funding + short funding − entry and exit fees.
-  Return on capital = net return / capital. Simple annualised return = 30-day
-  return × 365 / 30; no compounding. Annualisation repeats the net outcome
-  including round-trip fees, and is not a forecast.
+  Return on capital = net return / capital. Simple annualised return = return on
+  capital × 365 ÷ the actual tested days; no compounding. Annualisation repeats
+  the net outcome including round-trip fees, and is not a forecast. Short tested
+  periods annualise very aggressively, because fixed fees are scaled up with the
+  funding; periods under a day are flagged in the app for this reason.
 - This is a **funding-only historical backtest**, not actual total trading profit.
   Fixed equal USD notionals and 1:1 quote-currency/USD conversion are assumed.
   Price/basis P&L, collateral changes, slippage and liquidation are not simulated.
   Results are conditional on the position remaining open throughout the window.
 
-The chart and backtest share the same cached histories and 30-day window. Use
+The chart always shows the last 30 days; the backtest covers the shared period
+within it. Both share the same cached histories. Use
 **Refresh market data** to fetch fresh data. Keep `backtest.py` and `market_filters.py`
 alongside `app.py`. To check calculations and filters locally:
 `python3 -m unittest test_backtest.py test_market_filters.py`.
