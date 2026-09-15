@@ -3,6 +3,13 @@
 Basis Watch turns the Bend Basis funding arbitrage feed into a clean local
 website. It uses the live public endpoint and the current `apr` response field.
 
+The app uses `https://api.bendbasis.com/v1` (the old `bendbasis.com/api/v1/public`
+routes are retired). Arbitrage requests follow every `next_cursor` page, with a
+15-day spread window and up to 500 rows per page. A failed page stops the load
+rather than silently presenting an incomplete opportunity list. History uses
+`/funding/history/{market_id}` with explicit 30-day `from`/`to` timestamps and
+`resolution=event`; liquidity uses `/markets/{market_id}`.
+
 The default filters match the original scanner:
 
 - Minimum APR: 15%
@@ -88,8 +95,8 @@ python3 -m streamlit run app.py
 
 - Capital is split equally between venues at 2× leverage per side. $10,000 total
   collateral means $5,000 collateral and $10,000 notional on each side.
-- Each historical payment is reconstructed as notional × historical APR / 100 ×
-  funding interval hours / 8,760. Positive rates cost the long and pay the short;
+- Each historical payment is calculated as notional × settled funding rate
+  (decimal). Positive rates cost the long and pay the short;
   negative rates reverse this. Each venue is summed independently, so different
   funding schedules do not discard or duplicate payments.
 - **The tested period is the overlap of both histories, not a fixed 30 days.**
@@ -102,12 +109,12 @@ python3 -m streamlit run app.py
 - Venues are not required to fund on the same schedule or at matching timestamps;
   the overlap is computed from coverage ranges, so hourly and 8-hourly markets
   can be compared.
-- The history endpoint supplies timestamps and annualised rates, not settlement
-  durations. Durations are inferred from successive timestamps; the first uses
-  the next observed interval. Repeated schedule changes are supported. Ambiguous
-  isolated intervals produce a **rough historical estimate**: the APR at the
-  end of each gap is applied over that gap. This may overstate or understate
-  funding if records are missing; it is not a verified realised return.
+- The current history endpoint supplies settled rates and funding intervals.
+  The chart converts rates to APR as rate × 100 × 8,760 / interval hours.
+  Missing intervals omit that event from the APR chart, but its settled rate
+  remains usable by the backtest. Backtesting sums settled rates directly and
+  never multiplies them by inferred gaps. Null funding rates are excluded with
+  a completeness note; missing payments are not filled with today's rate.
 - A backtest still requires valid rates, no conflicting duplicate records, and at
   least one payout for each leg inside the shared period. Coverage checks cannot
   prove every payout is present.
@@ -130,9 +137,9 @@ python3 -m streamlit run app.py
 
 The chart always shows the last 30 days; the backtest covers the shared period
 within it. Both share the same cached histories. Use
-**Refresh market data** to fetch fresh data. Keep `backtest.py` and `market_filters.py`
+**Refresh market data** to fetch fresh data. Keep `backtest.py`, `bend_api.py` and `market_filters.py`
 alongside `app.py`. To check calculations and filters locally:
-`python3 -m unittest test_backtest.py test_market_filters.py`.
+`python3 -m unittest test_backtest.py test_market_filters.py test_bend_api.py`.
 
 ## Troubleshooting
 

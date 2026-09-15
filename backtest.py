@@ -47,13 +47,14 @@ class BacktestResult:
 def normalize_history(history: pd.DataFrame, end: pd.Timestamp) -> pd.DataFrame:
     if history.empty or not {"Time", "APR"}.issubset(history.columns):
         raise HistoryUnavailable("No funding history is available.")
-    frame = history[["Time", "APR"]].copy()
+    frame = history.copy()
     frame["Time"] = pd.to_datetime(frame["Time"], utc=True, errors="coerce")
-    frame["APR"] = pd.to_numeric(frame["APR"], errors="coerce")
-    if frame["Time"].isna().any() or not frame["APR"].map(isfinite).all():
+    rate_column = "Funding rate" if "Funding rate" in frame else "APR"
+    frame[rate_column] = pd.to_numeric(frame[rate_column], errors="coerce")
+    if frame["Time"].isna().any() or not frame[rate_column].map(isfinite).all():
         raise HistoryUnavailable("History contains invalid timestamps or rates.")
     frame = frame[frame["Time"] <= end].sort_values("Time")
-    if (frame.groupby("Time")["APR"].nunique() > 1).any():
+    if (frame.groupby("Time")[rate_column].nunique() > 1).any():
         raise HistoryUnavailable("Conflicting rates exist for the same payout time.")
     frame = frame.drop_duplicates("Time").reset_index(drop=True)
     if len(frame) < 2:
@@ -81,7 +82,7 @@ def replay_leg(frame: pd.DataFrame, notional: float, sign: int,
     included = (frame["Time"] > start) & (frame["Time"] <= end)
     observed = hours[included].round(6)
     runs = observed.groupby(observed.ne(observed.shift()).cumsum()).size()
-    if len(runs) > 1 and (runs < 3).any():
+    if "Funding rate" not in frame and len(runs) > 1 and (runs < 3).any():
         notes.append(
             "Irregular payout intervals: each gap is estimated using the historical "
             "APR at its ending timestamp. Missing payouts and schedule changes "
@@ -94,12 +95,19 @@ def replay_leg(frame: pd.DataFrame, notional: float, sign: int,
     # The record at the coverage start sets timing only; it is not paid at entry.
     # On irregular histories this is an elapsed-time approximation, not verified
     # cash flows.
-    funding = float((payouts["APR"] / 100 * hours[included] / (365 * 24)).sum())
+    if "Funding rate" in frame:
+        funding = float(payouts["Funding rate"].sum())
+        intervals = payouts["Funding interval"].dropna() if "Funding interval" in payouts else pd.Series(dtype=float)
+        if frame.attrs.get("missing_rates"):
+            notes.append(f"{frame.attrs['missing_rates']} history records had no settled rate and were excluded; the total may be incomplete.")
+    else:
+        funding = float((payouts["APR"] / 100 * hours[included] / (365 * 24)).sum())
+        intervals = hours[included]
     return LegResult(
         funding=sign * notional * funding,
         payments=len(payouts), first=payouts["Time"].iloc[0],
         last=payouts["Time"].iloc[-1],
-        intervals_hours=tuple(sorted(hours[included].round(6).unique())),
+        intervals_hours=tuple(sorted(intervals.round(6).unique())),
         notes=tuple(notes),
     )
 

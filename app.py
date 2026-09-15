@@ -12,15 +12,13 @@ import requests
 import streamlit as st
 
 from backtest import HistoryUnavailable, calculate_backtest
+from bend_api import load_opportunities, load_history, load_market_snapshots, request_error_message
 from market_filters import (
     CLASS_LABELS, TRADFI_CLASSES, asset_classes, available_exchanges,
     exchange_ids, filter_asset_group,
 )
 
 
-API_URL = "https://bendbasis.com/api/v1/public/funding/arbitrage"
-HISTORY_URL = "https://bendbasis.com/api/v1/public/funding/markets/{market_id}/history"
-MARKETS_URL = "https://bendbasis.com/api/v1/public/funding/markets"
 DEFAULT_EXCHANGES = [
     "binance",
     "bybit",
@@ -379,18 +377,7 @@ st.markdown(
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_opportunities() -> tuple[pd.DataFrame, int, int, str]:
     """Fetch and normalize Bend Basis arbitrage opportunities."""
-    response = requests.get(
-        API_URL,
-        timeout=20,
-        headers={"User-Agent": "BasisWatch/1.0"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-
-    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
-        payload = payload["data"]
-    if not isinstance(payload, list):
-        raise ValueError("The API returned an unexpected response format.")
+    payload = load_opportunities()
 
     rows: list[dict[str, object]] = []
     skipped = 0
@@ -412,7 +399,7 @@ def fetch_opportunities() -> tuple[pd.DataFrame, int, int, str]:
             skipped += 1
             continue
 
-        if not asset or not long_exchange or not short_exchange:
+        if not asset or not long_exchange or not short_exchange or not isfinite(apr) or not isfinite(stability):
             skipped += 1
             continue
 
@@ -462,36 +449,8 @@ def fetch_exchange_ids() -> list[str]:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_history(market_id: int) -> pd.DataFrame:
-    """Fetch the latest 30 days of APR history for one funding market."""
-    response = requests.get(
-        HISTORY_URL.format(market_id=market_id),
-        params={"days": 30},
-        timeout=20,
-        headers={"User-Agent": "BasisWatch/1.0"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-
-    if not isinstance(payload, list):
-        raise ValueError("The history API returned an unexpected response format.")
-
-    rows: list[dict[str, object]] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            raise ValueError("The history API returned an invalid payout.")
-        try:
-            funding_time = pd.to_datetime(item["funding_time"], utc=True)
-            apr = float(item["apr"])
-        except (KeyError, TypeError, ValueError):
-            raise ValueError("The history API returned an invalid payout.")
-        if pd.isna(funding_time) or not isfinite(apr):
-            raise ValueError("The history API returned an invalid payout.")
-        rows.append({"Time": funding_time, "APR": apr})
-
-    history = pd.DataFrame(rows, columns=["Time", "APR"])
-    if not history.empty:
-        history = history.sort_values("Time", kind="stable").reset_index(drop=True)
-    return history
+    """Settled events for 30 days; derived APR is used only for the chart."""
+    return load_history(market_id)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -499,28 +458,7 @@ def fetch_market_snapshots(
     market_ids: tuple[int, ...],
 ) -> dict[int, dict[str, object]]:
     """Fetch current liquidity data for the selected funding markets."""
-    response = requests.get(
-        MARKETS_URL,
-        params={"market_ids": ",".join(str(market_id) for market_id in market_ids)},
-        timeout=20,
-        headers={"User-Agent": "BasisWatch/1.0"},
-    )
-    response.raise_for_status()
-    payload = response.json()
-
-    if not isinstance(payload, list):
-        raise ValueError("The markets API returned an unexpected response format.")
-
-    snapshots: dict[int, dict[str, object]] = {}
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        try:
-            market_id = int(item["market_id"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        snapshots[market_id] = item
-    return snapshots
+    return load_market_snapshots(market_ids)
 
 
 def format_quote_amount(value: object, quote_asset: str) -> str:
@@ -717,10 +655,7 @@ try:
     with st.spinner("Checking current funding spreads…"):
         opportunities, total_rows, skipped_rows, fetched_at = fetch_opportunities()
 except requests.RequestException as error:
-    st.error(
-        "Bend Basis could not be reached. Check your internet connection, then "
-        "select **Refresh market data**."
-    )
+    st.error(request_error_message(error))
     with st.expander("Technical details"):
         st.code(str(error))
     st.stop()
@@ -985,7 +920,9 @@ else:
         )
         st.altair_chart(chart, theme=None)
         st.caption(
-            "History updates after each market publishes its actual funding payout."
+            "History updates after each market publishes its actual funding payout. "
+            "Chart APR = settled rate × 100 × 8,760 ÷ funding interval hours. "
+            "Events without a reported interval are omitted from the APR chart but still used in the backtest."
         )
 
         if history_errors:
@@ -1037,7 +974,7 @@ else:
                 st.caption("Less than one day of shared history: annualisation is especially sensitive to fees and individual payouts.")
             if result.notes:
                 st.caption(
-                    "Rough historical estimate — payout timing is irregular. "
+                    "Historical data is incomplete. "
                     "See calculation details for the assumptions."
                 )
             result_color = "#087E70" if result.net >= 0 else "#B42318"
@@ -1078,22 +1015,20 @@ else:
                 for side, leg in (("Long", result.long), ("Short", result.short)):
                     intervals = ', '.join(f"{hours:g}h" for hours in leg.intervals_hours)
                     st.caption(
-                        f"{side}: {leg.payments:,} history records; inferred intervals {intervals}. "
+                        f"{side}: {leg.payments:,} history records; reported intervals {intervals or 'not provided'}. "
                         f"First {leg.first:%d %b %H:%M} UTC; last {leg.last:%d %b %H:%M} UTC."
                     )
                 st.write(
-                    "Each payment = notional × (historical APR ÷ 100) × interval hours "
-                    "÷ 8,760. Positive rates are paid by the long and received by the short; "
+                    "Each payment = notional × settled funding rate (decimal). "
+                    "Positive rates are paid by the long and received by the short; "
                     "negative rates reverse those cash flows. Each venue is summed independently. "
                     "Net return subtracts 0.2% entry and 0.2% exit fees from each leg's notional. "
                     "Annualised return = net return on capital × 365 ÷ actual tested days, without compounding."
                 )
     st.caption(
-        "Funding-only backtest reconstructed from historical APR, not actual total trading profit. "
-        "The API omits settlement durations, so intervals are inferred from payout timestamps "
-        "Includes full inferred payouts strictly after the shared start through the shared end. "
-        "For irregular histories, the ending historical APR is applied across each gap; "
-        "these results are labelled rough estimates. No current APR is substituted, and "
+        "Funding-only backtest using published settled funding rates, not actual total trading profit. "
+        "Includes full payouts strictly after the shared start through the shared end. "
+        "Missing rates are excluded, not treated as zero or filled across gaps. No current APR is substituted, and "
         "no funding is added after the last available timestamp. Assumes fixed equal USD notionals and "
         "1:1 quote-currency/USD value. Excludes price/basis P&L, slippage, collateral changes "
         "and liquidation; assumes both positions remain open throughout. "
