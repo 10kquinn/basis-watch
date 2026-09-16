@@ -72,8 +72,15 @@ def normalize_events(payload):
             interval = float("nan")
         if not isfinite(interval) or interval <= 0:
             interval = float("nan")
-        rows.append({"Time": timestamp, "Funding rate": rate, "Funding interval": interval})
-    history = pd.DataFrame(rows, columns=["Time", "Funding rate", "Funding interval"])
+        try:
+            mark = float(item.get("mark_price"))
+        except (TypeError, ValueError):
+            mark = float("nan")
+        if not isfinite(mark) or mark <= 0:
+            mark = float("nan")
+        rows.append({"Time": timestamp, "Funding rate": rate, "Funding interval": interval,
+                     "Mark price": mark})
+    history = pd.DataFrame(rows, columns=["Time", "Funding rate", "Funding interval", "Mark price"])
     history = history.sort_values("Time", kind="stable").reset_index(drop=True)
     # APR is a display conversion only; cash flows always use settled rates.
     hours = history["Funding interval"]

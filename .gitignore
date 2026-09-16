@@ -15,3 +15,5 @@ __pycache__/
 .streamlit/secrets.toml
 *.pem
 *.key
+data/
+*.sqlite3*

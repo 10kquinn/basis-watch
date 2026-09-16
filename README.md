@@ -14,8 +14,8 @@ The default filters match the original scanner:
 
 - Minimum APR: 15%
 - Minimum stability: 80%
-- Initially selected exchanges: Kraken, OKX, Lighter, Hyperliquid, dYdX, Binance,
-  Bybit, Coinbase International (`coinbase_intx` in the current feed)
+- Research universe and initially selected exchanges: TradeXYZ (`tradexyz`),
+  Hyperliquid, Lighter, Binance, Bybit and OKX
 - Both the long and short exchange must be in the allowed list
 
 ## Fastest way to run it on a Mac
@@ -55,9 +55,8 @@ python3 -m streamlit run app.py
 - Use **Asset group → TradFi** for stocks, ETFs, indices, commodities, forex and
   other TradFi-linked derivatives. **Crypto** includes provider-classified crypto;
   **All** also includes unclassified assets. You can narrow TradFi by category.
-- The exchange selector includes the full live Bend Basis exchange catalogue,
-  plus any additional venues present in the opportunity feed. **Select all**
-  enables every venue; **Clear all** removes them. Both legs must be selected.
+- The exchange selector is limited to the six research venues. **Select all**
+  enables these venues; **Clear all** removes them. Both legs must be selected.
   Venue names are preserved separately (including HIP-3 and other sub-venues).
 - Asset classifications come from `https://api.bendbasis.com/v1/assets`; exchange
   IDs come from `https://api.bendbasis.com/v1/exchanges`. Both catalogues are cached
@@ -164,7 +163,8 @@ private trading data, or `.streamlit/secrets.toml` to the repository.
 4. In the service's **Settings → Networking**, generate a public domain.
 5. Share the resulting HTTPS address with your coworker.
 
-No database, volume, or environment secrets are needed. Keep Streamlit's default
+The public scanner needs no secrets. The private journal needs the database and
+password configuration below. Keep Streamlit's default
 security protections enabled. Railway hosting can incur usage charges; review
 your plan and configure spending alerts in your account. GitHub-connected
 services can redeploy when you push updates to the selected branch.
@@ -174,7 +174,143 @@ services can redeploy when you push updates to the selected branch.
 1. Sign in at [Streamlit Community Cloud](https://share.streamlit.io/) with GitHub.
 2. Create an app from this repository, branch `main`, main file `app.py`.
 3. Choose Python 3.12 in advanced settings and deploy.
-4. Share the generated app address. No secrets are required.
+4. Share the generated app address. The scanner works without secrets; configure
+   the journal below before relying on hosted persistence.
+
+## Research lab: funding plus price divergence
+
+Choose **Research lab** above the scanner. The sidebar's asset, APR, stability and
+six-venue filters apply. Set capital (default $10,000), fee per leg per transaction
+(default 0.2%), historical slippage per fill (default 0.05%) and how many pairs to
+check (default 12; maximum 100). **Run research** fetches each unique market once.
+If the strict 80% stability filter returns too few candidates, explicitly lower it
+in the sidebar; the application never silently relaxes your filters.
+
+The research replay differs from the scanner's legacy funding-only panel:
+
+- Equal **underlying quantity**, fixed through the trade, with at most 2x leverage
+  on each half of collateral. Different prices mean slightly different notionals.
+- Native bundle contracts such as 1000PEPE/kPEPE are converted into common units.
+  Only USDT/USDC linear perps are included, assuming both stablecoins equal $1.
+  Prices differing by over 20% are rejected for contract/data review.
+- Funding is quantity × the mark price at each settlement × the decimal rate,
+  negative for the long and positive for the short. Each venue's events are
+  summed separately even when schedules differ.
+- Price P&L uses simultaneous mark timestamps shared by both markets; no stale
+  8-hour mark is passed off as a current price. No future interpolation. Entry
+  and exit marks include adverse slippage; fees are charged on actual simulated
+  entry/exit notionals. These prices are estimates, NOT historical bid/ask fills.
+- The longest available shared span inside the last 30 days is displayed.
+  Detected payout gaps remain flagged and disqualify a research candidate; no
+  payout is invented. Missing marks/rates can make total-P&L replay unavailable.
+- Two fixed timing rules use trailing 1-day or 3-day settled funding to predict
+  whether a 7-day hold covers a four-fill cost hurdle. Only completed subsequent
+  holds are scored; holds within each pair/rule do not overlap. No parameter
+  optimisation. Today's pair selection still creates selection/survivorship bias.
+- Current projections use the venue's public book depth for the intended size,
+  both opening and hypothetical immediate closing prices, plus fees. There is
+  no double-counting of the spread as extra slippage. Insufficient depth or stale
+  quotes fail explicitly. Rates and prices are assumed constant for seven days.
+- A stress column halves funding and adds a 1% adverse basis movement on one
+  leg's notional. This is a scenario, not a forecast or confidence interval.
+- A **Research candidate** needs positive historical hold net, positive current
+  projection and at least one positive timing rule, with no detected coverage or
+  sampled-margin alert. It is NOT a proven profitable strategy. Negative and
+  excluded results remain visible. Different pairs/rules are separate experiments,
+  not one finite-capital portfolio backtest.
+
+The system does not model contract lot-size rounding/minimum orders, exchange-specific liquidation/maintenance tiers,
+intraperiod price paths, ADL, depegs, transfers, borrowing or rebalancing. Mark
+samples can miss liquidation. The 10% leg-equity/notional alert is only a coarse
+warning. TradeXYZ and Hyperliquid also share infrastructure; do not treat them as
+independent operational risks. The app never places real orders.
+
+Public data sources: [Bend Basis](https://docs.bendbasis.com/),
+[Binance](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Order-Book),
+[Bybit](https://bybit-exchange.github.io/docs/v5/market/orderbook),
+[OKX](https://www.okx.com/docs-v5/en/),
+[Hyperliquid / TradeXYZ](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint),
+and Lighter's public `https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders`.
+Regional exchange API blocks are not bypassed: those pairs are marked unavailable.
+
+## Persistent paper trading
+
+### Local Mac: no external database account needed
+
+Create `.streamlit/secrets.toml` beside `.streamlit/config.toml`, with a strong,
+unique journal password (do not commit it):
+
+```toml
+LEDGER_PASSWORD = "replace-with-a-long-random-private-password"
+```
+
+Run the app normally. Unlock **Research lab → Save research / unlock paper
+trading** with that password. Scans then save their assumptions, filtered universe,
+raw history archive, simulated cashflows and current order books. **Load latest
+saved research** restores a previous run after restarting.
+
+Inspect a pair, write an entry reason and exit rule, acknowledge the limitations,
+then **Open paper trade**. This fetches fresh books and saves fixed quantities and
+entry prices. No trades are opened automatically by a research scan.
+
+In **Paper ledger**, unlock the same private journal, then **Refresh all open
+trades** to archive settled funding and append close-at-current-book valuations.
+Each valuation includes funding, price P&L, all four trading fees and per-leg equity.
+**Close paper trade** saves a final immutable result. Missing funding prevents a
+final close; refresh/reconcile rather than silently claiming a complete profit.
+
+The SQLite database defaults to `data/basis-watch.sqlite3` next to `app.py`. It
+survives local restarts, but not deletion of that folder. Use **Prepare full journal
+export → Download journal backup** for a portable JSON audit backup. The database,
+secrets and exports must stay out of public GitHub. Entries and cashflow records
+are insert-only; provider revisions are reported rather than rewriting history.
+
+### Streamlit Cloud: add durable Supabase storage
+
+Streamlit's local disk is NOT a durable database. Without Supabase the app shows
+an explicit warning: hosted records may disappear on a redeploy/restart.
+
+1. Create/use your own Supabase project (review its current free-plan limits).
+2. Run `supabase.sql` in its SQL editor. The table has RLS enabled and grants no
+   access to anonymous or signed-in browser clients. Only server-side read/insert
+   access is enabled. No public policies are needed.
+3. In Streamlit app settings → Secrets, add:
+
+   ```toml
+   LEDGER_PASSWORD = "your-long-random-private-password"
+   SUPABASE_URL = "https://your-project.supabase.co"
+   SUPABASE_SERVICE_ROLE_KEY = "your-server-side-service-role-or-sb_secret-key"
+   ```
+
+4. Save/restart, unlock the journal and confirm it says **Supabase · durable shared
+   storage**. Share only the journal password with your coworker, not database keys.
+
+Never paste keys into chat, source control or a public form. This is a simple
+shared-password journal, not multi-user identity management. Use a long random
+password and Streamlit app-level access restrictions where available. Existing
+local records do not automatically migrate when you switch databases.
+
+### Collect over time
+
+By default updates are MANUAL. Streamlit Cloud sleeps; leaving the app deployed
+does not create a background recorder. Funding can be caught up within the API's
+30-day event retention, but missed quotes and intraperiod margin states cannot.
+
+From the project directory, on a machine that stays awake:
+
+```bash
+source .venv/bin/activate
+python recorder.py                 # one refresh of all open paper trades
+python recorder.py --interval 900  # refresh every 15 minutes; Ctrl+C stops
+```
+
+The recorder uses the same secrets/database. With Supabase it writes the same
+journal the hosted app reads. It only refreshes existing paper trades, never opens
+or closes positions. No background process or paid hosting is automatically
+enabled. For 24/7 recording, choose an always-on runner separately. If collection
+stops for over 30 days, unavailable funding stays flagged rather than fabricated.
+
+Run all tests: `python -m unittest discover -v`.
 
 ### Container testing (optional)
 

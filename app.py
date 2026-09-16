@@ -12,6 +12,8 @@ import requests
 import streamlit as st
 
 from backtest import HistoryUnavailable, calculate_backtest
+from research import VENUES
+from research_ui import render_research, render_ledger
 from bend_api import load_opportunities, load_history, load_market_snapshots, request_error_message
 from market_filters import (
     CLASS_LABELS, TRADFI_CLASSES, asset_classes, available_exchanges,
@@ -19,20 +21,11 @@ from market_filters import (
 )
 
 
-DEFAULT_EXCHANGES = [
-    "binance",
-    "bybit",
-    "coinbase_intx",
-    "dydx",
-    "hyperliquid",
-    "kraken",
-    "lighter",
-    "okx",
-]
+DEFAULT_EXCHANGES = list(VENUES)
 
 
 def exchange_label(value: str) -> str:
-    return "Coinbase International" if value == "coinbase_intx" else value.replace("_", " ").title()
+    return {"coinbase_intx": "Coinbase International", "tradexyz": "TradeXYZ", "okx": "OKX"}.get(value, value.replace("_", " ").title())
 
 
 st.set_page_config(
@@ -335,6 +328,13 @@ st.markdown(
             color: var(--teal);
         }
 
+        .stButton > button[kind="primary"],
+        .stButton > button[kind="primary"]:hover {
+            background: #075E54;
+            border-color: #075E54;
+            color: #FFFFFF;
+        }
+
         .stButton > button:focus-visible,
         input:focus-visible,
         button:focus-visible {
@@ -603,6 +603,11 @@ st.markdown(
 )
 
 
+page = st.radio("Workspace", ["Scanner", "Research lab", "Paper ledger"], horizontal=True, key="workspace_page")
+if page == "Paper ledger":
+    render_ledger()
+    st.stop()
+
 with st.sidebar:
     st.header("Opportunity filters")
     st.caption("Choose an asset group and the venues you want to compare.")
@@ -682,7 +687,7 @@ except (requests.RequestException, ValueError, TypeError):
 opportunities = opportunities.copy()
 opportunities["_asset_class"] = opportunities["Asset"].map(classes).fillna("unknown")
 opportunities["Asset class"] = opportunities["_asset_class"].map(CLASS_LABELS)
-exchange_options = available_exchanges(opportunities, exchange_catalogue)
+exchange_options = [x for x in VENUES if x in available_exchanges(opportunities, exchange_catalogue)]
 if "selected_exchanges" not in st.session_state:
     st.session_state.selected_exchanges = [x for x in DEFAULT_EXCHANGES if x in exchange_options]
 else:
@@ -699,8 +704,7 @@ with st.sidebar:
     selected_exchanges = st.multiselect(
         "Allowed exchanges", options=exchange_options, key="selected_exchanges",
         format_func=exchange_label,
-        help="Every exchange in Bend Basis's catalogue or live opportunities is available. "
-             "The original eight venues are selected by default.",
+        help="Research is limited to TradeXYZ, Hyperliquid, Lighter, Binance, Bybit and OKX.",
     )
     st.divider()
     sort_label = st.selectbox(
@@ -732,6 +736,10 @@ filtered = filtered.sort_values(
     ascending=not descending,
     kind="stable",
 ).reset_index(drop=True)
+
+if page == "Research lab":
+    render_research(filtered)
+    st.stop()
 
 highest_apr = f"{filtered['APR'].max():,.2f}%" if not filtered.empty else "—"
 summary_html = f"""

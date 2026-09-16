@@ -9,5 +9,14 @@
 !market_filters.py
 !test_backtest.py
 !test_market_filters.py
+!research.py
+!execution.py
+!storage.py
+!paper.py
+!lab.py
+!research_ui.py
+!recorder.py
+!test_research.py
+!test_research_ui.py
 !.streamlit/
 !.streamlit/config.toml

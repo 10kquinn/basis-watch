@@ -8,10 +8,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install -r requirements.txt
 
-COPY app.py backtest.py market_filters.py bend_api.py test_backtest.py test_market_filters.py test_bend_api.py ./
+COPY app.py backtest.py market_filters.py bend_api.py research.py execution.py storage.py paper.py lab.py research_ui.py recorder.py test_backtest.py test_market_filters.py test_bend_api.py test_research.py test_research_ui.py ./
 COPY .streamlit/config.toml .streamlit/config.toml
-RUN python -m unittest -q test_backtest.py test_market_filters.py test_bend_api.py \
-    && useradd --create-home --uid 10001 appuser
+RUN python -m unittest discover -q \
+    && useradd --create-home --uid 10001 appuser \
+    && mkdir /app/data && chown appuser:appuser /app/data
 USER appuser
 
 EXPOSE 8501
