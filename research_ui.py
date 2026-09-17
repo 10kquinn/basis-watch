@@ -34,7 +34,9 @@ def private_store():
     try:
         store = configured_store(config)
         st.caption(store.backend)
-        if not store.url:
+        if not store.url and config.get("RAILWAY_VOLUME_MOUNT_PATH"):
+            st.caption("Railway persistent volume · records survive deployments. Keep volume backups enabled.")
+        elif not store.url:
             st.warning("Local storage only: Streamlit Cloud can erase this database on redeploy/restart. Connect Supabase before relying on hosted records.")
         return store
     except (ValueError, requests.RequestException) as error:
@@ -168,7 +170,10 @@ def render_ledger():
         closed = {r["id"] for r in store.records("close")}
         active = [t for t in trades if t["id"] not in closed]
         st.caption(f"{len(active)} open experiments · ${sum(t['settings']['capital'] for t in active):,.2f} total allocated paper capital. These are separate manual experiments, not an automatically managed portfolio.")
-        st.info("Refreshes are manual unless you run the included recorder. Streamlit does not collect while asleep. Funding can be recovered for up to 30 days; missed quotes and longer funding gaps cannot be reconstructed.")
+        if os.environ.get("RECORDER_ENABLED") == "1":
+            st.info("A background recorder is configured to refresh open paper trades every " + os.environ.get("RECORDER_INTERVAL", "900") + " seconds while the service is running. Check valuation timestamps to confirm updates. It never opens or closes trades.")
+        else:
+            st.info("Refreshes are manual unless you run the included recorder. Streamlit does not collect while asleep. Funding can be recovered for up to 30 days; missed quotes and longer funding gaps cannot be reconstructed.")
         if active and st.button("Refresh all open trades"):
             with st.spinner("Archiving settlements and valuing both legs…"):
                 for trade in active:

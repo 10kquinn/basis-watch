@@ -160,8 +160,23 @@ private trading data, or `.streamlit/secrets.toml` to the repository.
 2. Select this repository. Its root should contain `app.py` and `Dockerfile`.
 3. Railway builds the Python image and runs the calculation tests before starting
    the app. The app listens on Railway's assigned `PORT`.
-4. In the service's **Settings → Networking**, generate a public domain.
-5. Share the resulting HTTPS address with your coworker.
+4. Attach one persistent volume at `/app/data`. Use one service/replica: the
+   website and recorder share SQLite on this disk, not separate services.
+5. Set service variables `LEDGER_DB_PATH=/app/data/basis-watch.sqlite3`,
+   `RAILWAY_RUN_UID=0`, `RECORDER_ENABLED=1`, `RECORDER_INTERVAL=900` and a strong
+   private `LEDGER_PASSWORD`. The launcher initializes volume permissions then
+   drops root privileges before starting either process. No Supabase is needed.
+6. Disable serverless/sleeping so recording continues with no browser open.
+   Enable daily volume backups and account spending alerts. A volume survives
+   redeployment, but is not itself a backup. Never delete it to redeploy.
+7. In **Settings → Networking**, generate a public domain and share its HTTPS
+   address. Give the journal password only to trusted coworkers.
+
+The launcher stops both processes if either exits, allowing Railway to restart
+them together. Recording updates only existing paper trades; it never sends real
+orders. New deployments have a brief interruption while the volume moves. Local
+research records are not uploaded automatically; export/import them separately
+if required. A missing volume blocks startup rather than silently losing data.
 
 The public scanner needs no secrets. The private journal needs the database and
 password configuration below. Keep Streamlit's default

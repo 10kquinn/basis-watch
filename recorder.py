@@ -24,6 +24,8 @@ def record_once(store):
         except Exception as error:
             failures += 1
             print(f"{datetime.now(timezone.utc).isoformat()} {trade['id']} not updated: {type(error).__name__}: {error}", flush=True)
+    print(f"{datetime.now(timezone.utc).isoformat()} Recorder cycle complete: "
+          f"{sum(t['id'] not in closed for t in trades)} open paper trades; {failures} failures.", flush=True)
     return failures
 
 
